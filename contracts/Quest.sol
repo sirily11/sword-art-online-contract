@@ -6,11 +6,19 @@ contract QuestSystem {
         string description;
         uint reward;
         bool completed;
+        bool verified;
+        address completer;
     }
 
     event QuestCreated(uint256 id, address indexed creator, Quest quest);
     event QuestTaken(uint256 id, address indexed taker, Quest quest);
     event QuestCompleted(uint256 id, address indexed completer, Quest quest);
+    event QuestVerified(
+        uint256 id,
+        address indexed verifier,
+        address indexed completer,
+        Quest quest
+    );
 
     // maps the address of the creator to the quest
     mapping(address => Quest) private quests;
@@ -37,6 +45,9 @@ contract QuestSystem {
         );
         require(creatorQuest[msg.sender] == 0, "You already have a quest");
 
+        quest.verified = false;
+        quest.completer = address(0);
+
         // Quest created
         // store the quest in the quest list
         questList[id] = quest;
@@ -55,6 +66,7 @@ contract QuestSystem {
             questCreators[questId] != msg.sender,
             "You can't take your own quest"
         );
+        require(!questList[questId].completed, "Quest already completed");
 
         questTaken[msg.sender] = questId;
         emit QuestTaken(questId, msg.sender, questList[questId]);
@@ -64,20 +76,42 @@ contract QuestSystem {
         uint questId = questTaken[msg.sender];
         require(questId > 0, "You don't have a quest");
 
-        Quest memory quest = questList[questId];
+        Quest storage quest = questList[questId];
         require(quest.reward > 0, "Quest does not exist");
         require(!quest.completed, "Quest already completed");
 
-        // Update all state variables first
+        // Mark as completed and store completer's address
         quest.completed = true;
-        questList[questId] = quest;
-        questTaken[msg.sender] = 0;
-        creatorQuest[questCreators[questId]] = 0;
+        quest.completer = msg.sender;
 
-        // Transfer funds last
-        (bool success, ) = payable(msg.sender).call{value: quest.reward}("");
-        require(success, "Transfer failed");
+        // Clear the quest taken status
+        questTaken[msg.sender] = 0;
 
         emit QuestCompleted(questId, msg.sender, quest);
+    }
+
+    function verifyComplete() public {
+        uint questId = creatorQuest[msg.sender];
+        require(questId > 0, "No active quest found");
+
+        Quest storage quest = questList[questId];
+        require(quest.reward > 0, "Quest does not exist");
+        require(quest.completed, "Quest not completed yet");
+        require(!quest.verified, "Quest already verified");
+        require(quest.completer != address(0), "No completer found");
+
+        // Mark as verified
+        quest.verified = true;
+
+        // Clear creator's quest
+        creatorQuest[msg.sender] = 0;
+
+        // Transfer reward to completer
+        (bool success, ) = payable(quest.completer).call{value: quest.reward}(
+            ""
+        );
+        require(success, "Transfer failed");
+
+        emit QuestVerified(questId, msg.sender, quest.completer, quest);
     }
 }
